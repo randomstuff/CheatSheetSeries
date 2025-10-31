@@ -2,226 +2,415 @@
 
 ## Introduction
 
-Many applications use **JSON Web Tokens** (JWT) to allow the client to indicate its identity for further exchange after
- authentication and to securely transmit data.
+**JSON Web Token** (JWT) is a standard format ([RFC 7519](https://tools.ietf.org/html/rfc7519))
+for cryptographically secured tokens. It can be used for many a wide range of usages such as:
 
-From [JWT.IO](https://jwt.io/introduction):
+* transporting information about the end-user identity and attributes in [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html#IDToken) (ID token);
+* representing authorizations for accessing a an API in an access token (eg. [RFC 9068](https://tools.ietf.org/html/rfc9068));
+* proving possesion of a private key (eg. [RFC 9449](https://tools.ietf.org/html/rfc9449));
+* authenticating a workload (eg. [JWT-SVID](https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md)).
 
-> JSON Web Token (JWT) is an open standard ([RFC 7519](https://tools.ietf.org/html/rfc7519)) that defines a compact and
-> self-contained way for securely transmitting information between parties as a JSON object. This information can be
-> verified and trusted because it is digitally signed. JWTs can be signed using a secret (with the **HMAC** algorithm)
-> or a public/private key pair using **RSA** or **ECDSA**.
+JWT can provide **authenticity** (JWS) and/or **confidentiality** (JWE) to the token content:
 
-JSON Web Token is used to carry information related to the identity and characteristics (claims) of a client. This
- information should signed by the server in order for it to detect whether it was tampered with after sending it to the
- client. This will prevent an attacker from changing the identity or any characteristics (for example, changing the role
- from simple user to admin or change the client login).
+* An authenticated JWT (JWS) is protected against tampering (**authenticity**).
+  It includes some proof of authenticity which can be used by the
+  recipient to verify that it has not been tampered with
+  and has not been forged altogether.
+  In most applications, you want the token to be authenticated.
+* The content of an encrypted JWS (JWE) is protected such that only its recipient
+  should be able to inspect its content (**confidentiality**).
+  This is desirable if the token is passed to a third party
+  which should not be able to inspect the token content.
 
-This token is created during authentication (is provided in case of successful authentication) and is verified by the
- server before any processing. It is used by an application to allow a client to present a token representing the user's
- "identity card" to the server and allow the server to verify the validity and integrity of the token in a secure way,
- all of this in a stateless and portable approach (portable in the way that client and server technologies can be
- different including also the transport channel even if HTTP is the most often used).
+In addition, the JWT specification allows the usage of unsecure JWTs (`"alg":"none"`).
+These JWTs do not provide ANY form of authenticity protection
+and should usually not be used.
+They are not discussed here.
 
+JWT is a profile of the more general
+JOSE format ([RFC 7515](https://tools.ietf.org/html/rfc7515), [RFC 7516](https://tools.ietf.org/html/rfc7516)).
+While this cheat sheet is focused on JWTs,
+a large part of what is discussed here is more generally applicable to JOSE messages in general.
+Conversely, [CWT](https://datatracker.ietf.org/doc/html/rfc8392), and more generally [COSE](https://datatracker.ietf.org/doc/rfc9052/), have a very similar design
+and many of the things discussed might be applicable to CWT and COSE as well.
 
-### Verification
+## Concepts
 
-Your application, absolutely should verify that the tokens it recieves are valid. You can do this with a symmetric scheme, where
-a secret between all parties out of band. For more on how to manage secrets please refer to the [secrets management cheat sheet](Secrets_Management_Cheat_Sheet.md). Or you can use an asymmetric key to signe your tokens.  you have the option of signing your
-tokens with a centrally signed certificate but, a system [Json Web Key Sets](https://datatracker.ietf.org/doc/html/rfc7517) a
-reasonably well supported system that integrates well with most JWT libraries and allows you the benefits of asymmetric encryption
-while being able to take advantage of modern TLS solutions that prevent your application from needing access to the same certificate
-that's encrypting traffic in transit. There are concerns on how to do this with multi-node systems; but in general use of a data
-store like redis can be used to keep track of the largely ephemeral keys you would create.
+### Actors
 
-![JWKS Multi-Node](../assets/JWTCSA/jwks.png)
+**Issuer:** the issuer of the JWT is the party which created the token.
+The issuer is generally communicated in the issuer claim (`iss`):
+this claim can be used by the audience to find the relevant keys to process the token
+and apply the correct policy.
 
-### JWKS Startup Examples
+**Audience:** the audience of the JWT is the actor which is supposed to verify its authenticity,
+decrypt it (if necessary) and validate its content. In order to prevent against audience confusion attacks,
+where a JWT intended for one audience is sent by a malicious actor to an unintended audience,
+the audience is generally communicated in the audience claim (`aud`)
+and MUST be validated by the audience.
 
-=== "Python Example (`jwcrypto`)"
-    --8<-- "JWTCSA/1-jwks.md:jwcrypto"
+**Presenter/Holder:**
+the presenter (resp. holder) of the token is the actor which presents the token to the audience the token (resp. holds the token).
+In some cases, the presenter of the token is the issuer
+but in many cases, the issuer gives the JWT to another presenter.
+Depending on the application, this third-party may for example be identified by the authorized party (`azp`) of client identifier (`client_id`) claims.
 
-## Token Structure
+TODO, add some examples?
 
-Token structure example taken from [JWT.IO](https://jwt.io/#debugger):
+### Type of tokens
 
-`[Base64(HEADER)].[Base64(PAYLOAD)].[Base64(SIGNATURE)]`
+**Bearer token:** TODO
 
-```text
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.
-eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.
-TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ
-```
+**Proof-of-posession token:** TODO
 
-Chunk 1: **Header**
+## Authenticity (JWS)
 
-```json
+An authenticated JWT (JWS) is protected against tampering (**authenticity**).
+It includes some proof of authenticity which can be used by the
+recipient to verify that it has not been tampered with
+and has not been forged altogether.
+This can be done either using:
+
+* a digital signature (public-key cryptography, using a public/private key pair);
+* a MAC (using a shared secret).
+
+In most applications, you want the token to be authenticated
+and the consumer of the token MUST vaidate the authenticity of the token.
+
+### Structure of a signed JWT
+
+The following elements are present in signed JWTs:
+
+* **Protected Header:** the JWT header contains some information about the token such as the type of token (IANA media type)
+and the cryptographic algorithms used to protect the token.
+* **Claims:** the content JWT is a list of claims (usually about the subject). See the [JWT IANA Registry](https://www.iana.org/assignments/jwt/jwt.xhtml) for a list of standard claims.
+* **Signature**, a signature in JWT is either a public-key digital signature (using a public/private key pair) or a MAC (using a shared secret). The signatures protects both the protected headers and the claims.
+
+An authenticated JWT has the following format:
+
+~~~
+{base64url(json(header))}.{base64url(json(claims))}.{base64ur(signature)}
+~~~
+
+The following example is taken from [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519)
+(with line breaks added for presentation purpose):
+
+~~~
+eyJ0eXAiOiJKV1QiLA0KICJhbGciOiJIUzI1NiJ9
+.
+eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFt
+cGxlLmNvbS9pc19yb290Ijp0cnVlfQ
+.
+dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+~~~
+
+The decoded protected header is:
+
+~~~json
 {
-  "alg": "HS256",
-  "typ": "JWT"
+  "typ": "JWT",
+  "alg": "HS256"
 }
-```
+~~~
 
-Chunk 2: **Payload**
+The decoded claims are:
 
-```json
+~~~json
 {
-  "sub": "1234567890",
-  "name": "John Doe",
-  "admin": true
+  "iss": "joe",
+  "exp": 1300819380,
+  "http://example.com/is_root": true
 }
-```
+~~~
 
-Chunk 3: **Signature**
+### Signature vs. MAC
 
-```javascript
-HMACSHA256( base64UrlEncode(header) + "." + base64UrlEncode(payload), KEY )
-```
+Recommendation: use a digital signature scheme when possible?
 
-And example of this jwt can be found [here](https://jwt.io/) on JWT.io signed with a symmetric key called `test` (obviously
- weak).
+A JWE can be authenticated using either a digital signature or a MAC:
 
-## Objective
+* When using a digital signature, the issuer of the token uses a private key to generate a signature.
+  The audience of the token can use the associated public key to verify the authenticity of the token.
+  Whereas the private key must only be known by the issuer, the public key can be public.
+* When using a MAC, a shared secret is shared between the issuer and the audience.
+  The same shared secret is used by the issuer to generate the token and by the audience
+  to verify the authenticity of the token.
+  The issuer MUST not use the same secret for different audiences
+  and, more generally, the same secret MUST only be shared between these two participants.
 
-This cheatsheet provides tips to prevent common security issues when using JSON Web Tokens (JWT).
+Using a MAC may be interesting in the following cases:
 
-## Consideration about Using JWT
+* The issuer of the token is the sole audience of the token.
 
-Even if a JWT token is "easy" to use and allow to expose services (mostly REST style) in a stateless way, it's not the
- solution that fits for all applications because it comes with some caveats, like for example the question of the
- storage of the token (tackled in this cheatsheet) and others.
+#### Public-key signature
 
-If your application does not need to be fully stateless, you can consider using traditional session system provided by
- all web frameworks and follow the advice from the dedicated [session management cheat sheet](Session_Management_Cheat_Sheet.md).
- Especially for authenticating users, the use of tools like Oauth2 or OIDC backed by SAML has become an industry best
- practice, as it allows one SAML implementation/Server to integrate a large number of authentication best practices.
- Some of those tools use JWT's under the hood.
+Benefits of using a digital signature:
 
-## Issues
+* The issuer can reuse the same public key for many different audiences.
+* The consumer (audience) of the token only need public information to validate the token authenticity
+  which reduces the risk of secret leakage by the consumer.
+* Because the public key does not need to be secret, it can easily be distributed (eg. by publishing it at a public HTTPS URI).
+* This makes key rotation simpler as well.
 
-### None Hashing Algorithm
+Recommended signature algorithms in order of preference:
 
-#### Symptom
+1. EdDSA (Ed25519, Ed448);
+2. ECDSA (ES256, ES384, ES512);
+3. RSASSA-PSS (PS256, PS384, PS512).
 
-This attack, described [here](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/), occurs
- when an attacker alters the token and changes the hashing algorithm to indicate, through the *none* keyword, that the
- integrity of the token has already been verified. As explained in the link above *some libraries treated tokens signed
- with the none algorithm as a valid token with a verified signature*, so an attacker can alter the token claims and
- the modified token will still be trusted by the application.
+The following algorithms are NOT recommended:
 
-#### How to Prevent
+* RSASSA-PKCS1-v1_5 (RS256, RS384, RS512).
 
-First, use a JWT library that is not exposed to this vulnerability, or use a library that allows you to specify which
- algorithms are considered acceptable and do not include (or explicitly exclude) the `none` algorithm. For example in
- [`pyjwt.decode`](https://pyjwt.readthedocs.io/en/stable/api.html#jwt.decode) (python) you can explicitly state which
- signature(s) is acceptable. Most libraries have fixed this issue, but as a rule, if you're using a symmetric key you
-should explicitly set which libraries are allowed.
+TODO, ES256K?
 
-Second (and not shown) is to use an asymmetric key to sign your jwts. In general, it should be seen as a best practice
- to use an asymetrc key to sign jwts rather than a symmetric key.
+Notes:
 
-#### Implementation Example Symmetric Key
+* Support for EdDSA in JWT implementations may be currently somewhat limited.
+* Generating ECDSA signatures may be dangerous on embedded systems where the quality of the randomness may be problematic. In this case, you must only use ECDSA signature if you make sure than the signature implementation uses deterministic signatures as defined in [RFC 6979](https://datatracker.ietf.org/doc/html/rfc6979).
 
-=== "Java Example"
-    --8<-- "JWTCSA/0-verification.md:java"
+TODO, Post-quantum signatures. ML-DSA (ML-DSA-44, ML-DSA-65, ML-DSA-87)? very large signature, probably not great justified at the moment for short-lived signatures. ML-DSA is designed to be resistant against quantum computers. However its support in JWT implementation is currently very limited. The size of if the signatures in ML-DSA is much larger than in ECDSA and EdDSA, resulting into very large JWTs.
 
-=== "Python Example (`pyjwt`)"
-    --8<-- "JWTCSA/0-verification.md:pyjwt"
+#### MAC
 
-=== "JavaScript Example (`jose`)"
-    --8<-- "JWTCSA/0-verification.md:jose"
+The following MAC algorithms are recommended:
 
-### Token Sidejacking
+* HMAC with SHA-2 (HS256, HS384, HS512)
 
-#### Symptom
+Secret management:
 
-This attack occurs when a token has been intercepted/stolen by an attacker and they use it to gain access to the system
- using targeted user identity. In part, this attack really can't be mitigated "in platform" as JWTs are generically stateless
- by design.
+* Do not reuse the same secret for another purpose (eg. for encryption).
+  * Using the same key for authenticating different types of JWTs or JOSE is fine as long as this does not introduce a risk of token type confusion.
+* Do not reuse the same secret with another audience.
+* Do not reuse the same secret with another issuer.
+* Do not use a password as MAC secret.
+* The secret must be generated using a local, cryptographically secure secret generator.
+* The secret must have at least the same size as the output (eg. 256, 384 and 512 bits respectively for HS256, HS384 and HS512).
+* Do not publish your secret key!
 
-#### How to Prevent
+Valid HMAC secret generation example:
 
-If you're using a jwt as a session token in the context of a webapp you should follow the
- [Session Management Cheat Sheet](Session Management Cheat Sheet). But a more generic fix might be to use JWTs in conjunction
- with OIDC/OAUTH2 and utilize the replay protections those meta libraries provide. However, if you're looking to implement
- a similar solution you can utilize a `nonce`.
+~~~python
+import secrets
+secret_for_hs256 = secrets.token_bytes(256//8)
+~~~
 
-Additionally, depending on your application and security designs; it might make sense to have your JWT tokens valid for
- short periods of time; especially in a "service to service" context where the service can regenerate a token at any time.
- There may be a performance concern associated with signing a jwt token on each request; but modern CPUs should be able to
- generate tokens without much consideration for all but the most abnormal workloads. This wouldn't eliminate the problem
- of token sidejacking, but it would limit the amount of time a successful sidejacking could be utilized.
+Invalid HMAC secret generation:
 
-/// details | Stateful Considerations
-    type: warning
+~~~python
+import random
 
-Using a nonce in a multi-node environment will require state to be shared between each node. Generally this is done with
- a database table or a tool like [redis](https://redis.io/). If you're application is designed to be stateless, or if it's
- a microservices type architecture this approach may not be ideal, or might be somewhat difficult to utilize.
-///
+# Using a password/passphrase is not OK.:
+bad_secret1_for_hs256 = "MyProject2025!"
 
-So in this example you're server would return a jwt with the `nonce` claim (along with the normal `nbf`,
- `iat`, `exp` time based claims).
+# Not a secure randomness source:
+bad_secret2_for_hs256 = random.randbytes(256//8)
 
-/// details | ToDo: Nonce Recommendation
-    type: ToDo
+# Not enough entropy:
+bad_secret3_for_hs256 = random.randbytes(128//8)
 
-Find the "right way" to implement a nonce. Finding conflicting information about how it should work (just server verify,
- just client verify, both verify); protections for simultaneous API calls etc...
-///
+# Not enough entropy for HS512:
+bad_secret_for_hs512 = random.randbytes(256//8)
+~~~
 
-### No Built-In Token Revocation by the User
-
-#### Symptom
-
-This problem is inherent to JWT because a token only becomes invalid when it expires. The
- [`jti`](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7) component of the specification is supposed to allow for the
- ability for token revocation on the server side. Additionally, if a public certificate is used and the library supports it,
- a signing certificate should be able to be revoked  and that should invalidate the jwt token(s) signed with it.
-
-#### How to Prevent
-
-/// details | Stateful Considerations
-type: warning
-
-Using a `jti` in a multi-node environment will require token IDs to be shared between each node. Generally this is done
- with a database table or a tool like [redis](https://redis.io/). If you're application is designed to be stateless, or
- if it's a microservices type architecture this approach may not be ideal, or might be somewhat difficult to utilize.
-///
-
-Use a `jti`.
-
-Use a publicly signed certificate to sign jwts and check for certificate revocation on validation.
-
-### Validate Common Claims
-
-So you have a REST or similar api, it accepts JWTs. How to you validate both A, that the jwt is who it says it's from and B, that
-the things in the JWT are nominally "correct". There's a couple of options..
-
-We'd like to see the following claims be included in our standard:
-
-| Claim | Name | Example |
-|:------|:-----|:-------------------|
-| `iss` | Issuer Claim | `requestingapplication.example.com` |
-| `sub` | Subject Claim | * `user@application.example.com`<br>* `system`<br>* `user@useremail.com`|
-| `aud` | Audience Claim | `targetapplication.example.com` |
-| `exp` | Expiration Time Claim | unix timestamp |
-| `nbf` | Not Before Claim | unix timestamp |
-| `iat` | Issued At Claim | unix timestamp |
-
-### Implement Buisness Logic post Validation
+## Protected headers
 
 TODO
 
-Discuss a moving target towards OIDC claims.
+### Token Media Type
+
+The `typ` header field may be used to indicate the media type of the token. The  `application/jwt` type is a generic type for JWTs. However, specific applications of JWTs define more specific media types of the form `application/*+jwt` such as:
+
+* `application/at+jwt` for access tokens;
+* `application/dpop+jwt` for [DPoP proofs](https://datatracker.ietf.org/doc/html/rfc9449) (proof-of-possession of a private key);
+* etc.
+
+It is recommended to use a specific media type for specific applications instead of using the generic `application/jwt` type. This makes it possible to
+
+Using a specific media type in your tokens and validating this specific media type can be used to prevent cross-application JWT
+
+Notes:
+
+* you can and should omit the `application/` prefix in the `typ` header (eg. `"typ:"at+jwt"`);
+* media types are case insensitive.
+
+An an issuer,
+
+* you SHOULD include a specific token type in the generated tokens;
+* use a standard one if applicable (see the [Media Types IANA registry](https://www.iana.org/assignments/media-types/media-types.xhtml));
+* use a private one otherwise (eg. `application/myorganisation-myapplication+jwt`) and document its usage.
+
+As a consumer,
+
+* you SHOULD validate that the token type included in the JWT is the one expected in the current context if such a type has been defined;
+* in some cases, you may need to accept `application/jwt` for retrocompatibility with older issuers which did not include a specific toke type;
+* you SHOULD reject other unexpected token types.
+
+## Claims
+
+See the [JWT IANA Registry](https://www.iana.org/assignments/jwt/jwt.xhtml) for a list of standard claims.
+Some importants claims are discussed in this section.
+
+### Validity
+
+TODO, `iat` and `nbf`
+
+### Audience
+
+TODO, `aud`
+
+A JWT can include more than one audience:
+
+~~~json
+{"aud": ["audience1","audience2"]}
+~~~
+
+If these token represent unrelated entities, this might present unrelated (and possibly distrusting entitied). When receiving the JWT from its presente r`"audience1"` could forward the token to `"audience2"` and impersonate the subject and/or presented on `"audience2"`. Even if the different audiences trust each other one audience could be compromised. If the JWT has multiple audiences representing different entities (as opposed to different endpoint of the same entity), the token should be a proof-of-possession token (not a bearer token).
+
+TODO, audience ambiguity/etc. eg. when the audience is chosen by another party.
+
+### Issuer
+
+TODO, `iss`
+
+### Presenter
+
+TODO, `client_id`, `azp`
+
+### Metadata
+
+TODO, `jti` and `iat`
+
+### Subject
+
+TODO, `sub`
+
+TODO, `act`, `may_act`
+
+### Authorizations
+
+TODO, `scope`
+
+## Confidentiality (JWE)
+
+Usually, you want a token which provides authenticity (JWS). In some cases, you might want to have confidentiality as well. This might be important if the claims contain some sensitive information (such as PII) that should not be exposed to the presenter (for example). This is achieved by using a Nested JWT: this is usually done by first signing the claims and then encrypting the resulting token.
+
+You usualy don't want to have a JWT which provides confidentiality only: when using an encrypted JWT, you usually want to provide authenticity as well.
+
+The correct handling of encryption introduces additional requirements such as:
+
+* lack of forward secrecy (in general);
+* susceptible to Harvest now, decrypt later (HNDL), especially when using non-post-quantum public key encryption.
+
+For these reasons, these considerations are currently not addessed in this Cheat Sheet but will be addressed in a upcoming version.
+
+## Key publishing
+
+TODO
+
+Recognizing a public key from a private key in JWK format:
+
+| Key types           | kty        | Public key fields | Private key fields 
+|---------------------|------------|-------------------|-------------------
+| ML-DSA              | `AKP`      | `alg`, `pub`      | `priv`
+| EC (eg. ECDSA)      | `EC`       | `crv`, `x`, `y`   |
+| RSA                 | `RSA`      | `n`, `e`          | `d`, `p`, `q`, `dp`, `dq`, `qi`
+| EdDSA, X25519, X448 | `OKP`      | `crv`, `x`        | `d`
+
+TODO, add missing `alg`
+
+TODO, other algorithms
+
+TODO, JSON Web Key Use `use` and JSON Web Key Operations `key_ops`
+
+## Attacks on JWT
+
+For more details, see [RFC 8725](https://datatracker.ietf.org/doc/html/rfc8725).
+
+TODO, align with RFC 8725
+
+### Accepting Unsecured JWT
+
+Some JWT libraries, [used to accept unsecured JWTs by default](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/) (`"alg":"none"`). In this case, an attacker would be able forge his own JWTs: depending on the application, he might be able to impersonate arbitrary users, obtains arbitrary authorizations, etc.
+
+This issue should now be fixed in JWT libraries.
+
+### Cross-JWT Confusion
+
+TODO
+
+## Recommendations
+
+For more details, see [RFC 8725](https://datatracker.ietf.org/doc/html/rfc8725).
+
+### General
+
+* Do not log JWTs if theyr are intended to be secret. You can log specific claims however (if their are not considered sensible). The `jti` claim, associated with the `iss` claim, can be used to identify a specific token.
+
+### Key Management
+
+TODO
+
+Key generation:
+
+* Do not reuse the same key pair for another purpose (eg. for public-key encryption, for TLS authentication, for WebAuthn/Passkey, etc.). Using the same key for authenticating different types of JWTs or JOSE is fine as long as this does not introduce a risk of token type confusion or token audience confusion.
+* The issuer should generate its own private keys. Don't use a private key generated by another agent (such as the consumer): your private key would not be private; this would increase the number of actors having access to your private key.
+* If possible, store the private keys on dedicated hardware (such as a  smart card, a TPM) or a dedicated service.
+
+Key distribution:
+
+* The issuer can publish its public keys.
+* This is typically done using the JWKS format over HTTPS.
+* Make sure you do not publish the private keys by mistake! This is especialy important when publishing in JWK format as a private key in JWK format may be interpreted as a public key.
+
+### Issuer
+
+* Verify the issued token are not vulnerable to token type confusion.
+* Include a specific token type claim (`typ`) depending on intended usage of the token in order to protect against token type confusion.
+* TODO
+
+### Verifier
+
+* Rely on a trusted library for JWT verification.
+* Validate important claims
+* TODO
+
+## Alternatives to JWT and JOSE
+
+Depending on the application, some alternatives to JWT and JOSE might be:
+
+* opaque tokens;
+* [CBOR Object Token](https://datatracker.ietf.org/doc/html/rfc8392) (CWT) and [CBOR Object Signing and Encryption](https://datatracker.ietf.org/doc/html/rfc8152) (COSE);
+* [PASETO](https://paseto.io/);
+* [Eclipse Biscuit](https://www.biscuitsec.org/);
+* [Fernet](https://github.com/fernet/spec/blob/master/Spec.md);
+* [Security Assertion Markup Language (SAML)](https://docs.oasis-open.org/security/saml/Post2.0/sstc-saml-tech-overview-2.0.html) and [XML signature](https://www.w3.org/TR/xmldsig-core2/).
+
+Critique of JWT and JOSE:
+
+* [No Way, JOSE! Javascript Object Signing and Encryption is a Bad Standard That Everyone Should Avoid](https://paragonie.com/blog/2017/03/jwt-json-web-tokens-is-bad-standard-that-everyone-should-avoid)
 
 ## Further Reading
 
+Main JWT and JOSE specifications:
+
+- [RFC 7515](https://datatracker.ietf.org/doc/html/rfc7515), JSON Web Signature (JWS)
+- [RFC 7516](https://datatracker.ietf.org/doc/html/rfc7516), JSON Web Encryption (JWE)
+- [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517), JSON Web Key (JWK)
+- [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519), JSON Web Token (JWT)
+- [RFC 8725](https://datatracker.ietf.org/doc/html/rfc8725), JWT Best Practices
+
+IANA registries:
+
+- [JSON Object Signing and Encryption (JOSE) IANA Reguistry](https://www.iana.org/assignments/jose/jose.xhtml)
+- [JSON Web Token IANA Reguistry (JWT)](https://www.iana.org/assignments/jwt/jwt.xhtml)
+
+Attacks on JWT and JOSE:
+
 - [{JWT}.{Attack}.Playbook](https://github.com/ticarpi/jwt_tool/wiki) - A project documents the known attacks and potential security vulnerabilities and misconfigurations of JSON Web Tokens.
-- [JWT Best Practices Internet Draft](https://datatracker.ietf.org/doc/draft-ietf-oauth-jwt-bcp/)
 - [JWT.io Discussion Forum](https://community.auth0.com/c/jwt/8) (Hosted by [Auth0](https://auth0.com/))
-- [JWT Overview on Wikipedia](https://en.wikipedia.org/wiki/JSON_Web_Token)
-- [OpenID](https://openid.net/) - A larger framework to provide ways to connect JWT based authentication with other authentication
-  systems.
-- [JSON Web Encryption (JWE) RFC 7516](https://datatracker.ietf.org/doc/html/rfc7516) - A JWT like specification that includes
-  payload encryption.
+
+Other useful links:
+
+* [JSON Web Token (JWT) Debugger](https://jwt.io/)
+
