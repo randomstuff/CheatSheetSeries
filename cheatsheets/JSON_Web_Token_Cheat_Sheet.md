@@ -18,6 +18,12 @@ In its most common form (signed JWT), this information is protected by the gener
 
 JWT can also provide confidentiality of the claims (encrypted JWT). Encryption is currently not treated in this cheat sheet but many aspects of this cheat sheet are applicable to encrypted JWTs.
 
+## Terminology
+
+* The actor who creates the token is called the **issuer**. It is usually communicated by the `iss` claim.
+* The actor who verifies the token is called the **recipient**, **validator** or **audience** of the token. It is usually communicated by the `aud` claim.
+* The actor who presents/sends the token (use the token) to the recipient is called the **presenter**, **sender**, **holder** of the token. It is sometimes communicated by the `client_id` or `azp` claim.
+
 ## Token Structure
 
 Signed JWTs have the following structure:
@@ -182,6 +188,24 @@ bad_secret = secrets.token_bytes(128//8)
 meh_secret_for_hs512 = secrets.token_bytes(256//8)
 ```
 
+### Proof-of-possession and sender-constrained tokens
+
+Security tokens such as JWTs are often valuable assets for malicious ctors. They are at risk of being exfiltrated or miused by the malicious consumers of the token, especially if the the mere presentation of token is enough to use it token (**bearer tokens**).
+
+**Sender-constrained** tokens mitigate these risks. The mere presentation of the JWTs is not enough to use it:
+
+- the JWT is associated with a public/private-key pair possessed by the holder/sender/presenter of the token;
+- the public key is indicated in the JWT (through the [`cnf` claim](https://datatracker.ietf.org/doc/html/rfc7800));
+- the sender must prove it in possession of the corresponding private key in order to use the token (**proof-of-possession**).
+
+The following mechanisms can be used for proof-of-possession:
+
+- With [TLS-bound JWT](https://www.rfc-editor.org/info/rfc8705/#section-3), the client presents the sender-constrained token in a mutually-authenticated TLS (mTLS) session authenticated with the sender private key.
+- With [DPoP](https://datatracker.ietf.org/doc/html/rfc9449), the client sends an additional short-lived JWT ([DPoP Proof](https://datatracker.ietf.org/doc/html/rfc9449#name-dpop-proof-jwt-syntax)) signed with the sender private key.
+- When using [Selective Disclosuse JWT](https://www.rfc-editor.org/info/rfc9901/) (SD-JWT), the presenter can optionally send an additional short-lived JWT ([Key Binding JWT](https://www.rfc-editor.org/info/rfc9901/#section-4.3)) signed with the presenter private key.
+
+**Warning:** When the JWT can have more than once consumer (multiple values in the `aud` claim or no `aud` claim), **sender-constrained** should usually be used. Otherwise when the holder sends the token to consumer1, consumer1 could attempt to use the token against consumer2.
+
 ## Threats on JWTs
 
 See [RFC 8725](https://datatracker.ietf.org/doc/html/rfc8725#name-threats-and-vulnerabilities) for a discussion on threats and vulnerabilities related to JWT.
@@ -195,6 +219,24 @@ This issue should now be fixed in JWT libraries.
 Mitigation:
 
 - Make sure that `"alg":"none"` is not accepted by your JWT parser. It should be disabled by default by recent implementations.
+
+### Stolen JWT
+
+A JWE can be stolen by an attacker which may attempt to use it.
+
+Mitigations:
+
+* use short expiration;
+* use sender-constrained tokens.
+
+### JWT usage by malicious consumer
+
+When the consumer of a token receive the token, it may attempt to reuse on another consumer.
+
+Mitigations:
+
+* restrict the token to a single consumer (`aud` claim);
+* use sender-constrained tokens.
 
 ## JWT revocation
 
